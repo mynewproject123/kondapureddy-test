@@ -1,16 +1,14 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Wild Rydes Infrastructure as Code (IaC) - Deploys a scalable containerized application on ECS Fargate with CI/CD pipeline'
+Description: 'Wild Rydes Infrastructure as Code (IaC) - Exam Test #2'
 
 Parameters:
   GitHubOwner:
     Type: String
     Description: GitHub repository owner
-    Default: "wildrydes"
   
   GitHubRepo:
     Type: String
     Description: GitHub repository name
-    Default: "application"
   
   GitHubBranch:
     Type: String
@@ -179,14 +177,14 @@ Resources:
       NetworkMode: awsvpc
       RequiresCompatibilities:
         - FARGATE
-      ExecutionRoleArn: "arn:aws:iam::345594584716:role/codebuild-term-role"
+      ExecutionRoleArn: !GetAtt ECSExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
       ContainerDefinitions:
         - Name: wildrydes-app
           Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/wildrydes-repo:latest
           Essential: true
           PortMappings:
             - ContainerPort: !Ref ContainerPort
-              HostPort: !Ref ContainerPort
               Protocol: tcp
           LogConfiguration:
             LogDriver: awslogs
@@ -194,6 +192,12 @@ Resources:
               awslogs-group: !Ref CloudWatchLogsGroup
               awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: ecs
+          HealthCheck:
+            Command: ["CMD-SHELL", "curl -f http://localhost:5000/ || exit 1"]
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
 
   CloudWatchLogsGroup:
     Type: AWS::Logs::LogGroup
@@ -260,7 +264,7 @@ Resources:
     DependsOn: ECRRepository
     Properties:
       Name: WildRydesBuild
-      ServiceRole: "arn:aws:iam::345594584716:role/codebuild-term-role"
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
       Artifacts:
         Type: CODEPIPELINE
       Environment:
@@ -271,41 +275,9 @@ Resources:
         EnvironmentVariables:
           - Name: REPOSITORY_URI
             Value: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/wildrydes-repo
-          - Name: CONTAINER_NAME
-            Value: wildrydes-app
       Source:
         Type: CODEPIPELINE
-        BuildSpec: |
-          version: 0.2
-          phases:
-            pre_build:
-              commands:
-                - echo Logging in to Amazon ECR...
-                - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $REPOSITORY_URI
-                - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
-                - IMAGE_TAG="${COMMIT_HASH:=latest}"
-                - echo "Repository URI: $REPOSITORY_URI"
-                - aws ecr describe-repositories || echo "Repository might not exist"
-            build:
-              commands:
-                - echo Building the Docker image...
-                - docker build -t $REPOSITORY_URI:latest .
-                - docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:$IMAGE_TAG
-                - docker images
-            post_build:
-              commands:
-                - echo Pushing the Docker image...
-                - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $REPOSITORY_URI
-                - docker push $REPOSITORY_URI:latest || echo "Push failed with status $?"
-                - docker push $REPOSITORY_URI:$IMAGE_TAG || echo "Push failed with status $?"
-                - echo Writing image definitions file...
-                - aws ecs describe-task-definition --task-definition WildRydesTaskDefinition --query taskDefinition > taskdef.json
-                - envsubst < appspec_template.yml > appspec.yml
-                - cat appspec.yml
-          artifacts:
-            files:
-              - appspec.yml
-              - taskdef.json
+        BuildSpec: buildspec.yml
 
   Pipeline:
     Type: AWS::CodePipeline::Pipeline
@@ -360,10 +332,39 @@ Resources:
               InputArtifacts:
                 - Name: BuildOutput
 
-  # CloudWatch Alarms
+  # Add IAM Roles
+  ECSExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonECS_FullAccess
+
+  # Add CloudWatch Alarms as per exam requirements
   BuildFailureAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
+      AlarmName: WildRydes-BuildFailure-Alarm
       AlarmDescription: Alarm for CodeBuild failures
       MetricName: FailedBuilds
       Namespace: AWS/CodeBuild
@@ -381,6 +382,7 @@ Resources:
   DeploymentFailureAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
+      AlarmName: WildRydes-Deployment-Alarm
       AlarmDescription: Alarm for ECS deployment failures
       MetricName: CPUUtilization
       Namespace: AWS/ECS
@@ -394,18 +396,24 @@ Resources:
           Value: !Ref ECSCluster
         - Name: ServiceName
           Value: !Ref ECSService
-      AlarmActions:
-        - !Ref AlarmTopic
 
   AlarmTopic:
     Type: AWS::SNS::Topic
     Properties:
-      DisplayName: WildRydes Build Failure Alarms
+      DisplayName: WildRydes-Pipeline-Alarms
 
 Outputs:
   LoadBalancerURL:
-    Description: URL of the load balancer
+    Description: URL of the application load balancer
     Value: !Sub http://${ApplicationLoadBalancer.DNSName}
+  
+  CodePipelineURL:
+    Description: URL of the CodePipeline console
+    Value: !Sub https://console.aws.amazon.com/codepipeline/home?region=${AWS::Region}#/view/${Pipeline}
+  
+  CloudWatchAlarmsURL:
+    Description: URL of the CloudWatch Alarms
+    Value: !Sub https://console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#alarmsV2:
   
   ECSCluster:
     Description: ECS Cluster Name
