@@ -300,11 +300,11 @@ Resources:
                 - docker push $REPOSITORY_URI:$IMAGE_TAG || echo "Push failed with status $?"
                 - echo Writing image definitions file...
                 - aws ecs describe-task-definition --task-definition WildRydesTaskDefinition --query taskDefinition > taskdef.json
-                - envsubst < appspec_template.yaml > appspec.yaml
-                - cat appspec.yaml
+                - envsubst < appspec_template.yml > appspec.yml
+                - cat appspec.yml
           artifacts:
             files:
-              - appspec.yaml
+              - appspec.yml
               - taskdef.json
 
   Pipeline:
@@ -356,7 +356,7 @@ Resources:
               Configuration:
                 ClusterName: !Ref ECSCluster
                 ServiceName: !Ref ECSService
-                FileName: appspec.yaml
+                FileName: appspec.yml
               InputArtifacts:
                 - Name: BuildOutput
 
