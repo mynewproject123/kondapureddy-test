@@ -1,0 +1,15 @@
+version: 0.0
+Resources:
+  - TargetService:
+      Type: AWS::ECS::Service
+      Properties:
+        TaskDefinition: <TASK_DEFINITION>
+        LoadBalancerInfo:
+          ContainerName: "$CONTAINER_NAME"
+          ContainerPort: 5000
+        BuildProject:
+          Properties:
+            ServiceRole: "arn:aws:iam::345594584716:role/codebuild-term-role"
+        Pipeline:
+          Properties:
+            RoleArn: "arn:aws:iam::345594584716:role/codebuild-term-role" 
